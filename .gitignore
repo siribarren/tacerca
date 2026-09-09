@@ -12,12 +12,14 @@ env/
 
 monitor.log
 *.log
+cl.siribarren.tacerca.may2026.plist
 
 tacerca_state*.json
 tacerca_booking_payload*.json
 tacerca_massive_state*.json
 tacerca_plan_mayo_2026_state.json
 tacerca_may2026_*_payload.json
+tacerca_query_*_state.json
 
 .pytest_cache/
 .mypy_cache/
