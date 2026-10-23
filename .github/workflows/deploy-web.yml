@@ -1,0 +1,37 @@
+name: Deploy configurable web monitor
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SSH
+        env:
+          GCP_VM_HOST: ${{ secrets.GCP_VM_HOST }}
+          GCP_VM_SSH_KEY: ${{ secrets.GCP_VM_SSH_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s' "$GCP_VM_SSH_KEY" > ~/.ssh/gcp_vm_key
+          chmod 600 ~/.ssh/gcp_vm_key
+          ssh-keyscan -H "$GCP_VM_HOST" >> ~/.ssh/known_hosts
+      - name: Deploy and restart web monitor
+        env:
+          GCP_VM_HOST: ${{ secrets.GCP_VM_HOST }}
+          GCP_VM_USER: ${{ secrets.GCP_VM_USER }}
+          GCP_PROJECT_PATH: ${{ secrets.GCP_PROJECT_PATH }}
+          TACERCA_WEB_USERNAME: ${{ secrets.TACERCA_WEB_USERNAME }}
+          TACERCA_WEB_PASSWORD: ${{ secrets.TACERCA_WEB_PASSWORD }}
+          TACERCA_WEB_SECRET_KEY: ${{ secrets.TACERCA_WEB_SECRET_KEY }}
+        run: |
+          test -n "$TACERCA_WEB_PASSWORD"
+          test -n "$TACERCA_WEB_SECRET_KEY"
+          ssh -i ~/.ssh/gcp_vm_key "$GCP_VM_USER@$GCP_VM_HOST" \
+            "cd '$GCP_PROJECT_PATH' && git fetch origin main && git checkout main && git reset --hard origin/main && venv/bin/pip install -r requirements.txt"
+          printf 'TACERCA_WEB_USERNAME=%s\nTACERCA_WEB_PASSWORD=%s\nTACERCA_WEB_SECRET_KEY=%s\n' \
+            "$TACERCA_WEB_USERNAME" "$TACERCA_WEB_PASSWORD" "$TACERCA_WEB_SECRET_KEY" | base64 | \
+            ssh -i ~/.ssh/gcp_vm_key "$GCP_VM_USER@$GCP_VM_HOST" "base64 -d > '$GCP_PROJECT_PATH/.env.web' && chmod 600 '$GCP_PROJECT_PATH/.env.web'"
+          ssh -i ~/.ssh/gcp_vm_key "$GCP_VM_USER@$GCP_VM_HOST" \
+            "sed -e 's|__PROJECT_PATH__|$GCP_PROJECT_PATH|g' -e 's|__SERVICE_USER__|$GCP_VM_USER|g' '$GCP_PROJECT_PATH/deploy/tacerca-web.service' > /tmp/tacerca-web.service && sudo -n cp /tmp/tacerca-web.service /etc/systemd/system/tacerca-web.service && sudo -n systemctl daemon-reload && sudo -n systemctl enable --now tacerca-web.service && sudo -n systemctl restart tacerca-web.service && sudo -n systemctl status tacerca-web.service --no-pager"

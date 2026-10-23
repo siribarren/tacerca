@@ -1,0 +1,20 @@
+[Unit]
+Description=Tacerca configurable web monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+WorkingDirectory=__PROJECT_PATH__
+EnvironmentFile=__PROJECT_PATH__/.env
+EnvironmentFile=__PROJECT_PATH__/.env.web
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__PROJECT_PATH__/venv/bin/gunicorn --workers 1 --threads 4 --bind 0.0.0.0:8080 --access-logfile - --error-logfile - monitor_web:app
+Restart=always
+RestartSec=10
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -27,3 +27,4 @@ tacerca_query_*_state.json
 dist/
 build/
 *.egg-info/
+data/
