@@ -91,6 +91,34 @@ class MonitorWebTest(unittest.TestCase):
             status = db.execute("SELECT status FROM reservations WHERE id = ?", (reservation_id,)).fetchone()[0]
         self.assertEqual(status, "review")
 
+    @patch("monitor_web.notify", return_value=True)
+    def test_notify_only_never_attempts_booking(self, notify_mock):
+        config = {
+            "quantity": 1, "auto_book": False,
+            "schedule_type": "exact", "exact_hours": ["08:25"],
+            "hour_from": None, "hour_to": None,
+        }
+        with monitor_web.connect() as db:
+            monitor_id = db.execute(
+                "INSERT INTO monitors (name, dates_json, schedule_type, exact_hours_json, quantity, auto_book, outbound, return_trip, active, created_at, updated_at) VALUES ('alerta','[]','exact','[]',1,0,1,0,1,'x','x')"
+            ).lastrowid
+            reservation_id = db.execute(
+                "INSERT INTO reservations (monitor_id, trip_date, direction, status, updated_at) VALUES (?, '28-10-2026', 'outbound', 'pending', 'x')",
+                (monitor_id,),
+            ).lastrowid
+            reservation = db.execute("SELECT * FROM reservations WHERE id = ?", (reservation_id,)).fetchone()
+        trip = {"_id": "p", "activeTrip": "a", "hourInit": "08:25", "vehicle": {"seatings": 2}, "seatings": []}
+        client = Mock()
+        client.fetch_trips.return_value = [trip]
+        monitor_web.process_reservation(client, config, reservation)
+        with monitor_web.connect() as db:
+            row = db.execute("SELECT status, detail FROM reservations WHERE id = ?", (reservation_id,)).fetchone()
+        self.assertEqual(row["status"], "available")
+        self.assertIn("Telegram", row["detail"])
+        client.check_trip_exists.assert_not_called()
+        client.create_trip_auth.assert_not_called()
+        notify_mock.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

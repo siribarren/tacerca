@@ -73,6 +73,7 @@ def init_db() -> None:
                 hour_from TEXT,
                 hour_to TEXT,
                 quantity INTEGER NOT NULL,
+                auto_book INTEGER NOT NULL DEFAULT 1,
                 outbound INTEGER NOT NULL DEFAULT 0,
                 return_trip INTEGER NOT NULL DEFAULT 0,
                 active INTEGER NOT NULL DEFAULT 1,
@@ -96,6 +97,9 @@ def init_db() -> None:
             );
             """
         )
+        columns = {row[1] for row in db.execute("PRAGMA table_info(monitors)")}
+        if "auto_book" not in columns:
+            db.execute("ALTER TABLE monitors ADD COLUMN auto_book INTEGER NOT NULL DEFAULT 1")
 
 
 def now_text() -> str:
@@ -192,6 +196,7 @@ def form_config() -> dict[str, Any]:
         "hour_from": hour_from,
         "hour_to": hour_to,
         "quantity": quantity,
+        "auto_book": request.form.get("action", "notify") == "book",
         "outbound": outbound,
         "return_trip": return_trip,
     }
@@ -237,12 +242,13 @@ def create_monitor() -> Any:
             cursor = db.execute(
                 """INSERT INTO monitors
                 (name, dates_json, schedule_type, exact_hours_json, hour_from, hour_to,
-                 quantity, outbound, return_trip, active, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+                 quantity, auto_book, outbound, return_trip, active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
                 (
                     config["name"], json.dumps(config["dates"]), config["schedule_type"],
                     json.dumps(config["exact_hours"]), config["hour_from"], config["hour_to"],
-                    config["quantity"], int(config["outbound"]), int(config["return_trip"]),
+                    config["quantity"], int(config["auto_book"]),
+                    int(config["outbound"]), int(config["return_trip"]),
                     stamp, stamp,
                 ),
             )
@@ -325,11 +331,13 @@ def mark_reservation(reservation_id: int, status: str, **fields: Any) -> None:
         db.execute(sql, (*updates.values(), reservation_id))
 
 
-def notify(message: str) -> None:
+def notify(message: str) -> bool:
     try:
         send_telegram(message)
+        return True
     except Exception:
         LOG.exception("No se pudo enviar la notificación de Telegram")
+        return False
 
 
 def process_reservation(client: TacercaClient, config: dict[str, Any], reservation: sqlite3.Row) -> None:
@@ -348,6 +356,24 @@ def process_reservation(client: TacercaClient, config: dict[str, Any], reservati
     trip = candidates[0]
     trip_id = normalize_trip_id(trip)
     hour = trip_departure_hour(trip)
+    if not config.get("auto_book", True):
+        label = ROUTES[direction][0]
+        message = (
+            f"Tacerca: hay reservas disponibles.\n{label}\n"
+            f"Fecha: {reservation['trip_date']}\nHora: {hour}\n"
+            f"Asientos disponibles: {available_seats(trip)}"
+        )
+        if notify(message):
+            mark_reservation(
+                reservation["id"], "available", trip_id=trip_id,
+                departure_hour=hour, detail="Disponibilidad avisada por Telegram",
+            )
+        else:
+            mark_reservation(
+                reservation["id"], "waiting", trip_id=trip_id,
+                departure_hour=hour, detail="Cupo encontrado; falta enviar Telegram",
+            )
+        return
     existing = extract_booking_code_from_response(client.check_trip_exists(trip_id))
     if existing:
         verification = client.get_trip(existing)
